@@ -116,7 +116,10 @@ cli()
 			   strcmp(cmd, "g") == 0) {
 			cli_graph(cmdline, &pos);
 			continue;
-		}
+		} else if (strcmp(cmd, "dijkstra") == 0 || strcmp(cmd, "d") == 0) {
+			cli_dijkstra(cmdline, &pos);
+			continue;
+		} 
 	}
 }
 
