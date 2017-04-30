@@ -24,6 +24,7 @@ void tuple_set_enum(
 	enum_list_t el);
 
 void tuple_print(tuple_t t, enum_list_t el);
+int get_tuple_weight(tuple_t t, enum_list_t el);
 
 /* Getters */
 char   tuple_get_char(char *tbuf);

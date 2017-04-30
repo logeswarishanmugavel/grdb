@@ -18,6 +18,7 @@ void nextarg(char *ln, int *pos, char *sep, char *arg);
 
 void cli_enum(char *cmdline, int *pos);
 void cli_graph(char *cmdline, int *pos);
+void cli_dijkstra(char *cmdline, int *pos);
 
 void cli_graphs_insert(graph_t g);
 
