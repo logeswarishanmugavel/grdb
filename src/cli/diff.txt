@@ -1,0 +1,1023 @@
+commit dbcadb2a4e9cea0e57454ff9b62a6c3f42fc27c2
+Author: logeswarishanmugavel <logeswari.shanmugavel@colorado.edu>
+Date:   Sun Apr 30 16:23:40 2017 -0600
+
+    Dijkstra's algorithm
+
+diff --git a/include/cli.h b/include/cli.h
+index 657d18b..0aea62d 100644
+--- a/include/cli.h
++++ b/include/cli.h
+@@ -18,6 +18,7 @@ void nextarg(char *ln, int *pos, char *sep, char *arg);
+ 
+ void cli_enum(char *cmdline, int *pos);
+ void cli_graph(char *cmdline, int *pos);
++void cli_dijkstra(char *cmdline, int *pos);
+ 
+ void cli_graphs_insert(graph_t g);
+ 
+diff --git a/include/tuple.h b/include/tuple.h
+index faa14a7..2aab2eb 100644
+--- a/include/tuple.h
++++ b/include/tuple.h
+@@ -24,6 +24,7 @@ void tuple_set_enum(
+ 	enum_list_t el);
+ 
+ void tuple_print(tuple_t t, enum_list_t el);
++int get_tuple_weight(tuple_t t, enum_list_t el);
+ 
+ /* Getters */
+ char   tuple_get_char(char *tbuf);
+diff --git a/src/cli/bufdump.o b/src/cli/bufdump.o
+deleted file mode 100644
+index af05a67..0000000
+Binary files a/src/cli/bufdump.o and /dev/null differ
+diff --git a/src/cli/cli.o b/src/cli/cli.o
+deleted file mode 100644
+index f8e992a..0000000
+Binary files a/src/cli/cli.o and /dev/null differ
+diff --git a/src/cli/cli_dijk.c b/src/cli/cli_dijk.c
+new file mode 100644
+index 0000000..91d8cc9
+--- /dev/null
++++ b/src/cli/cli_dijk.c
+@@ -0,0 +1,276 @@
++#include <assert.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <limits.h>
++#include "cli.h"
++#include "graph.h"
++#include "tuple.h"
++# define MAX 20
++
++typedef int bool;
++#define true 1
++#define false 0
++
++struct AdjListNode
++{
++    int dest;
++    int weight;
++    struct AdjListNode* next;
++};
++
++struct AdjList
++{
++    struct AdjListNode *head;  // pointer to head node of list
++};
++
++struct AdjList* array;
++
++struct AdjListNode* newAdjListNode(int dest, int weight)
++{
++    struct AdjListNode* newNode =
++            (struct AdjListNode*) malloc(sizeof(struct AdjListNode));
++    newNode->dest = dest;
++    newNode->weight = weight;
++    newNode->next = NULL;
++    return newNode;
++}
++
++
++struct MinHeapNode
++{
++    int  v;
++    int dist;
++};
++
++struct MinHeap
++{
++    int size;      // Number of heap nodes present currently
++    int capacity;  // Capacity of min heap
++    int *pos;     // This is needed for decreaseKey()
++    struct MinHeapNode **array;
++};
++
++struct MinHeapNode* newMinHeapNode(int v, int dist)
++{
++    struct MinHeapNode* minHeapNode =
++           (struct MinHeapNode*) malloc(sizeof(struct MinHeapNode));
++    minHeapNode->v = v;
++    minHeapNode->dist = dist;
++    return minHeapNode;
++}
++
++struct MinHeap* createMinHeap(int capacity)
++{
++    struct MinHeap* minHeap =
++         (struct MinHeap*) malloc(sizeof(struct MinHeap));
++    minHeap->pos = (int *)malloc(capacity * sizeof(int));
++    minHeap->size = 0;
++    minHeap->capacity = capacity;
++    minHeap->array =
++         (struct MinHeapNode**) malloc(capacity * sizeof(struct MinHeapNode*));
++    return minHeap;
++}
++
++void swapMinHeapNode(struct MinHeapNode** a, struct MinHeapNode** b)
++{
++    struct MinHeapNode* t = *a;
++    *a = *b;
++    *b = t;
++}
++
++void minHeapify(struct MinHeap* minHeap, int idx)
++{
++    int smallest, left, right;
++    smallest = idx;
++    left = 2 * idx + 1;
++    right = 2 * idx + 2;
++ 
++    if (left < minHeap->size &&
++        minHeap->array[left]->dist < minHeap->array[smallest]->dist )
++      smallest = left;
++ 
++    if (right < minHeap->size &&
++        minHeap->array[right]->dist < minHeap->array[smallest]->dist )
++      smallest = right;
++ 
++    if (smallest != idx)
++    {
++        // The nodes to be swapped in min heap
++        struct MinHeapNode *smallestNode = minHeap->array[smallest];
++        struct MinHeapNode *idxNode = minHeap->array[idx];
++ 
++        // Swap positions
++        minHeap->pos[smallestNode->v] = idx;
++        minHeap->pos[idxNode->v] = smallest;
++ 
++        // Swap nodes
++        swapMinHeapNode(&minHeap->array[smallest], &minHeap->array[idx]);
++ 
++        minHeapify(minHeap, smallest);
++    }
++}
++
++int isEmpty(struct MinHeap* minHeap)
++{
++    return minHeap->size == 0;
++}
++
++struct MinHeapNode* extractMin(struct MinHeap* minHeap)
++{
++    if (isEmpty(minHeap))
++        return NULL;
++ 
++    // Store the root node
++    struct MinHeapNode* root = minHeap->array[0];
++ 
++    // Replace root node with last node
++    struct MinHeapNode* lastNode = minHeap->array[minHeap->size - 1];
++    minHeap->array[0] = lastNode;
++ 
++    // Update position of last node
++    minHeap->pos[root->v] = minHeap->size-1;
++    minHeap->pos[lastNode->v] = 0;
++ 
++    // Reduce heap size and heapify root
++    --minHeap->size;
++    minHeapify(minHeap, 0);
++ 
++    return root;
++}
++
++void decreaseKey(struct MinHeap* minHeap, int v, int dist)
++{
++    // Get the index of v in  heap array
++    int i = minHeap->pos[v];
++ 
++    // Get the node and update its dist value
++    minHeap->array[i]->dist = dist;
++ 
++    // Travel up while the complete tree is not hepified.
++    // This is a O(Logn) loop
++    while (i && minHeap->array[i]->dist < minHeap->array[(i - 1) / 2]->dist)
++    {
++        // Swap this node with its parent
++        minHeap->pos[minHeap->array[i]->v] = (i-1)/2;
++        minHeap->pos[minHeap->array[(i-1)/2]->v] = i;
++        swapMinHeapNode(&minHeap->array[i],  &minHeap->array[(i - 1) / 2]);
++ 
++        // move to parent index
++        i = (i - 1) / 2;
++    }
++}
++
++bool isInMinHeap(struct MinHeap *minHeap, int v)
++{
++   if (minHeap->pos[v] < minHeap->size)
++     return true;
++   return false;
++}
++
++void printArr(int dist[], int n)
++{
++    printf("Vertex   Distance from Source\n");
++    for (int i = 0; i < n; ++i)
++        printf("%d \t\t %d\n", i, dist[i]);
++}
++
++void run_dijkstra(graph_t g, int source, int vcnt){
++	
++	int dist[vcnt];
++
++	struct MinHeap* minHeap = createMinHeap(vcnt);
++	for(int v = 0; v < vcnt; v++){
++		dist[v] = INT_MAX;
++		minHeap->array[v] = newMinHeapNode(v, dist[v]);
++		minHeap->pos[v] = v;
++	}
++	minHeap->array[source] = newMinHeapNode(source,dist[source]);
++	minHeap->pos[source] = source;
++	dist[source] = 0;
++	decreaseKey(minHeap, source, dist[source]);
++	minHeap->size = vcnt;
++	printf("test1\n");
++	while(!isEmpty(minHeap))
++	{
++		printf("test2\n");
++		struct MinHeapNode* minHeapNode = extractMin(minHeap);
++		int u = minHeapNode->v;
++		printf("test3\n");
++		struct AdjListNode* list = array[u].head;
++		printf("%d\n",u);
++		while(list != NULL){
++			int v = list->dest;
++			printf("test4\n");
++			printf("%d\n",v);
++			if(isInMinHeap(minHeap,v) && (dist[u] != INT_MAX) && (list->weight + dist[u] < dist[v])){
++				printf("test5\n");
++				dist[v] = dist[u] + list->weight;
++				decreaseKey(minHeap, v, dist[v]);
++				printf("test6\n");
++			}
++			list = list->next;
++			printf("test7\n");
++		}
++		printf("test8\n");
++	}
++	printArr(dist,vcnt);
++}
++
++void cli_dijkstra(char cmdline, int pos){
++	printf("Applying Dijkstra's Algorithm to the selected graph\n");
++	
++	//Check if atleast one graph is present
++	assert (graphs != NULL);
++
++	//initialization
++	graph_t g;
++	vertex_t v;
++	edge_t e;
++	int vcnt = 0;
++	int ecnt = 0;
++	int e_weight = 0;
++	int id1 = 0;
++	int id2 = 0;
++	int vid;
++
++	//Run the algorithm for all the graphs
++	for(g = graphs; g!=NULL; g = g->next){
++		if(g == current){
++			//graph_print(g,1);
++			array = (struct AdjList*) malloc(vcnt*sizeof(struct AdjList));
++			for(v = g->v; v!=NULL; v = v->next){
++				//vertex_print(v);
++				vid = v->id;
++				//printf("%d\n",vid);
++				vcnt++;
++				array[vid].head = NULL;
++			}
++			//printf("%d\n", vcnt);
++			for(e = g->e; e!=NULL; e = e->next){
++				//edge_print(e);
++				ecnt++;
++				if (e->tuple != NULL && 1)
++				{
++	 				e_weight = get_tuple_weight(e->tuple, g->el);
++			    	id1 = e->id1;
++			    	id2 = e->id2;
++			    	//printf("%d\n",id1);
++			    	//printf("%d\n",id2);
++			    	
++			    	struct AdjListNode* newNode = newAdjListNode(id2, e_weight);
++    				newNode->next = array[id1].head;
++    				array[id1].head = newNode;
++    				
++    				newNode = newAdjListNode(id1,e_weight);
++    				newNode->next = array[id2].head;
++    				array[id2].head = newNode;
++				}
++			}
++		}
++		//printf("%d\n", ecnt);
++		printf("sixthtest\n");
++		run_dijkstra(g,0,vcnt);
++		printf("seventhtest\n");
++	}
++}
+\ No newline at end of file
+diff --git a/src/cli/cli_dijkstra.c b/src/cli/cli_dijkstra.c
+index 26e2d99..c2dd20d 100644
+--- a/src/cli/cli_dijkstra.c
++++ b/src/cli/cli_dijkstra.c
+@@ -2,37 +2,234 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <limits.h>
+ #include "cli.h"
+ #include "graph.h"
+-# define MAX 20
++#include "tuple.h"
++#define MAX 9999
++int vcnt;
+ 
+-void cli_dijkstra(char cmdline, int pos){
+-	printf("Applying Dijkstra's Algorithm to the selected graph\n");
++/*--------------------------------------------------------------------------------------*/
++//		Dijkstra's Algorithm for the grdb database 
++/*--------------------------------------------------------------------------------------*/
++
++
++/*--------------------------------------------------
++ * reverse_string
++ *
++ * This function reverses the given string
++ *
++ * @param (char*) input string
++ *
++ * @return (char*)
++ --------------------------------------------------*/
++
++char* reverse_string(char *path){
++	
++	//Declaring Variables
++	int i = 0;
++    int j = strlen(path) -1;
++    char temp;
++
++    //Exchanging the character positions within the string
++    while(i<=j){
++		temp = path[i];
++		path[i] = path[j];
++		path[j] = temp;
++		i++;
++		j--;
++    }
++
++    return path;
++}
++
++/*--------------------------------------------------
++ * print_result
++ *
++ * This function prints the output of the algorithm
++ *
++ * @param (graph_t) the selected graph
++ * @param (int) the source vertex
++ * @param (int[]) holds the distance from source
++ * @param (int[]) holds previous node of the vertex
++ *				   in the path
++ *
++ * @return (void)
++ --------------------------------------------------*/
++
++void print_result(graph_t g, int source, int dist[vcnt], int prev[vcnt]){
++	
++	//Declaring Variables
++	int vid1, next;
++	vertex_t u;
++	char *rem = (char*)calloc(255, sizeof(char));
++	char *path = (char*)calloc(255, sizeof(char));
++
++	printf("\n--------------------------------------------------------------------------------------");
++	printf("\nShortest Path to all vertices from the source %d: ", source);
++	printf("\n--------------------------------------");
++	printf("\nVertex\tDistance\tPath");
++	printf("\n--------------------------------------");
++
++	//Printing the output
++	for(u = g->v; u!=NULL; u = u->next){
++		vid1 = u->id;
++			//Vertex and corresponding distance from the source
++			printf("\n%d\t%d\t",vid1,dist[vid1]);
++
++			//the path
++			sprintf(path, "%d", vid1);
++			next = prev[vid1];
++            do{
++            	if(next!=source){
++            		sprintf(rem, "%d", next);
++            		strcat(path,"-");
++            		strcat(path,rem);
++            	}
++            	next = prev[next];
++            }while(next!=source);
++           	sprintf(rem, "%d", next);
++            strcat(path,"-");
++            strcat(path,rem);
++           
++            printf("\t%s",reverse_string(path));
++	}
++	printf("\n");
++}
++
++/*--------------------------------------------------
++ * run_dijkstra
++ *
++ * This function executes the algorithm and 
++   calculates the shortest path between source and 
++   other vertices
++ *
++ * @param (int[][]) the cost matrix
++ * @param (graph_t) the selected graph
++ * @param (int) the source vertex
++ *
++ * @return (void)
++ --------------------------------------------------*/
++
++void run_dijkstra(int G[vcnt][vcnt], graph_t g, int source){
+ 	
+-	//Check if atleast one graph is present
++	//Declaring Variables
++	int dist[vcnt], prev[vcnt], visited[vcnt];
++	int count, minDist, nextNode;
++	int vid1, vid2;
++	vertex_t u,v;
++
++	//Initialize the distance vector from the direct path if present
++	for(u = g->v; u!=NULL; u = u->next){
++		vid1 = u->id;
++		dist[vid1] = G[source][vid1];
++		prev[vid1] = source;
++		visited[vid1] = 0;
++	}
++
++	//the properties of source vertex are set
++	dist[source] = 0;
++	visited[source] = 1;
++	count = 1;
++
++	while(count < vcnt-1){
++
++		//Finding the minimum distance vertex
++		minDist = MAX;
++		for(u = g->v; u != NULL; u = u->next){
++			vid1 = u->id;
++			if(dist[vid1] < minDist && !visited[vid1]){
++				minDist = dist[vid1];
++				nextNode = vid1;
++			}
++		}
++
++		//Updating the distance value of all the adjacent vertices
++		//For every adjacent vertex vid2, if sum of distance value of vid1 (from source) and weight of edge vid1-vid2, 
++		//is less than the distance value of vid2, then update the distance value of vid2.
++		visited[nextNode] = 1;
++		for(v = g->v; v != NULL; v = v->next){
++			vid2 = v->id;
++			if(!visited[vid2]){
++				if(minDist + G[nextNode][vid2] < dist[vid2]){
++					dist[vid2] = minDist+G[nextNode][vid2];
++					prev[vid2] = nextNode;
++				}
++			}
++		}
++
++		count++;
++	}
++
++	//Printing the result
++	print_result(g, source, dist, prev);
++}
++
++/*--------------------------------------------------
++ * cli_dijkstra
++ *
++ * This function initializes the required parameters
++   and calls the run function
++ *
++ * @param (char*) the commandline prompt
++ * @param (int*) 
++ *
++ * @return (void)
++ --------------------------------------------------*/
++
++void cli_dijkstra(char *cmdline, int *pos){
++	printf("\n--------------------------------------------------------------------------------------");
++	printf("\n                         Applying Dijkstra's Algorithm: ");
++	printf("\n--------------------------------------------------------------------------------------");
++
++	//To check if atleast one graph is available
+ 	assert (graphs != NULL);
+ 
+-	//initialization
++	//Declaring Variables;
+ 	graph_t g;
+-	vertex_t v;
++	vertex_t u,v;
+ 	edge_t e;
+-	int vcnt = 0;
+-	int ecnt = 0;
++	int e_weight = 0;
++	int vid1, vid2;
+ 
+-	//Run the algorithm for all the graphs
++	//For all the graphs
+ 	for(g = graphs; g!=NULL; g = g->next){
+ 		if(g == current){
+-			//graph_print(g,1);
++			
++			//Printing the selected graph
++			printf("\nSelected graph:");
++			printf("\n--------------------------------------------------------------------------------------");
++			graph_print(g,1);
++			
++			//Counting the number of vertices in the graph
+ 			for(v = g->v; v!=NULL; v = v->next){
+-				//vertex_print(v);
+ 				vcnt++;
+ 			}
+-			//printf("%d\n", vcnt);
++
++			//Initializing the cost matrix;
++			int G[vcnt][vcnt];
++			for(u = g->v; u!=NULL; u = u->next){
++				vid1 = u->id;
++				for(v = g->v; v!=NULL; v = v->next){
++					vid2 = v->id;
++					G[vid1][vid2] = MAX;
++				}
++			}
++
++			//Updating the cost matrix with the edge weights			
+ 			for(e = g->e; e!=NULL; e = e->next){
+-				//edge_print(e);
+-				ecnt++;
++				if (e->tuple != NULL && 1)
++				{
++	 				e_weight = get_tuple_weight(e->tuple, g->el);
++			    	vid1 = e->id1;
++			    	vid2 = e->id2;
++			    	G[vid1][vid2] = e_weight;
++			    	G[vid2][vid1] = e_weight;
++				}
+ 			}
+-			//printf("%d\n", ecnt);
++
++			//Executing the algorithm
++			run_dijkstra(G,g,cmdline[4]-'0');
+ 		}
+ 	}
+ }
+\ No newline at end of file
+diff --git a/src/cli/cli_dijkstra.o b/src/cli/cli_dijkstra.o
+deleted file mode 100644
+index 0ab23d1..0000000
+Binary files a/src/cli/cli_dijkstra.o and /dev/null differ
+diff --git a/src/cli/cli_enum.o b/src/cli/cli_enum.o
+deleted file mode 100644
+index 3ba94d3..0000000
+Binary files a/src/cli/cli_enum.o and /dev/null differ
+diff --git a/src/cli/cli_graph.o b/src/cli/cli_graph.o
+deleted file mode 100644
+index 6deeea1..0000000
+Binary files a/src/cli/cli_graph.o and /dev/null differ
+diff --git a/src/cli/cli_graph_edge.o b/src/cli/cli_graph_edge.o
+deleted file mode 100644
+index e6eaf23..0000000
+Binary files a/src/cli/cli_graph_edge.o and /dev/null differ
+diff --git a/src/cli/cli_graph_new.o b/src/cli/cli_graph_new.o
+deleted file mode 100644
+index 490e810..0000000
+Binary files a/src/cli/cli_graph_new.o and /dev/null differ
+diff --git a/src/cli/cli_graph_schema.o b/src/cli/cli_graph_schema.o
+deleted file mode 100644
+index 014ad9c..0000000
+Binary files a/src/cli/cli_graph_schema.o and /dev/null differ
+diff --git a/src/cli/cli_graph_schema_add.o b/src/cli/cli_graph_schema_add.o
+deleted file mode 100644
+index 4e36e3f..0000000
+Binary files a/src/cli/cli_graph_schema_add.o and /dev/null differ
+diff --git a/src/cli/cli_graph_tuple.o b/src/cli/cli_graph_tuple.o
+deleted file mode 100644
+index 2ffc635..0000000
+Binary files a/src/cli/cli_graph_tuple.o and /dev/null differ
+diff --git a/src/cli/cli_graph_update_tuples.o b/src/cli/cli_graph_update_tuples.o
+deleted file mode 100644
+index 93e9b57..0000000
+Binary files a/src/cli/cli_graph_update_tuples.o and /dev/null differ
+diff --git a/src/cli/db b/src/cli/db
+deleted file mode 100755
+index 52e1ce7..0000000
+Binary files a/src/cli/db and /dev/null differ
+diff --git a/src/cli/dijkstra_testscript_1 b/src/cli/dijkstra_testscript_1
+new file mode 100644
+index 0000000..f617e68
+--- /dev/null
++++ b/src/cli/dijkstra_testscript_1
+@@ -0,0 +1,21 @@
++g n
++g e 0 1
++g e 0 3
++g e 0 4
++g e 1 2
++g e 2 3
++g e 3 4
++g s e int i
++g t 0 1 i 10
++g t 0 3 i 30
++g t 0 4 i 100
++g t 1 2 i 50
++g t 2 3 i 20
++g t 3 4 i 60
++g d 0
++q
++
++//0->1 			10
++//0->3->2 		50
++//0->3 			30
++//0->3->4 		90
+\ No newline at end of file
+diff --git a/src/cli/dijkstra_testscript_2 b/src/cli/dijkstra_testscript_2
+new file mode 100644
+index 0000000..c16fb4f
+--- /dev/null
++++ b/src/cli/dijkstra_testscript_2
+@@ -0,0 +1,41 @@
++g n
++g e 0 1
++g e 1 2
++g e 2 3
++g e 3 4
++g e 4 5
++g e 0 7
++g e 1 7
++g e 2 8
++g e 8 6
++g e 7 8
++g e 6 5
++g e 2 5
++g e 3 5
++g e 6 7
++g s e int i
++g t 0 1 i 4
++g t 1 2 i 8
++g t 2 3 i 7
++g t 3 4 i 9
++g t 4 5 i 10
++g t 0 7 i 8
++g t 1 7 i 11
++g t 2 8 i 2
++g t 8 6 i 6
++g t 7 8 i 7
++g t 6 5 i 2
++g t 2 5 i 4
++g t 3 5 i 14
++g t 6 7 i 1
++g d 3
++q
++
++//0->1			4
++//0->1->2		12
++//0->1->2->3	19
++//0->7->6->5->4	21
++//0->7->6->5	11
++//0->7->6		9
++//0->7			8
++//0->1->2->8	14
+diff --git a/src/cli/lex.o b/src/cli/lex.o
+deleted file mode 100644
+index 810e4f6..0000000
+Binary files a/src/cli/lex.o and /dev/null differ
+diff --git a/src/cli/main.o b/src/cli/main.o
+deleted file mode 100644
+index 166e7ce..0000000
+Binary files a/src/cli/main.o and /dev/null differ
+diff --git a/src/db/edge.o b/src/db/edge.o
+deleted file mode 100644
+index a1ebf2c..0000000
+Binary files a/src/db/edge.o and /dev/null differ
+diff --git a/src/db/enum.o b/src/db/enum.o
+deleted file mode 100644
+index 56e4245..0000000
+Binary files a/src/db/enum.o and /dev/null differ
+diff --git a/src/db/graph.o b/src/db/graph.o
+deleted file mode 100644
+index 346689b..0000000
+Binary files a/src/db/graph.o and /dev/null differ
+diff --git a/src/db/libdb.a b/src/db/libdb.a
+deleted file mode 100644
+index 69fe2bc..0000000
+Binary files a/src/db/libdb.a and /dev/null differ
+diff --git a/src/db/schema.o b/src/db/schema.o
+deleted file mode 100644
+index ecaa3ee..0000000
+Binary files a/src/db/schema.o and /dev/null differ
+diff --git a/src/db/string_pool.o b/src/db/string_pool.o
+deleted file mode 100644
+index a58c36c..0000000
+Binary files a/src/db/string_pool.o and /dev/null differ
+diff --git a/src/db/tuple.o b/src/db/tuple.o
+deleted file mode 100644
+index 58c7f50..0000000
+Binary files a/src/db/tuple.o and /dev/null differ
+diff --git a/src/db/tuple_print.c b/src/db/tuple_print.c
+index b527c70..652a4e2 100644
+--- a/src/db/tuple_print.c
++++ b/src/db/tuple_print.c
+@@ -109,3 +109,53 @@ tuple_print(tuple_t t, enum_list_t el)
+ 	}
+ 	printf("]");
+ }
++
++int 
++get_tuple_weight(tuple_t t, enum_list_t el)
++{
++ 	attribute_t attr;
++ 	int i, offset;
++ 
++ 	assert (t != NULL);
++ 	assert (t->buf != NULL);
++
++ 	for (attr = t->s->attrlist; attr != NULL; attr = attr->next) {
++		offset = tuple_get_offset(t, attr->name);
++  		if (offset >= 0) {
++   			switch (attr->bt) {
++   
++   				case INTEGER:
++    				i = tuple_get_int(t->buf + offset);
++    				return i;
++
++    			case CHARACTER:
++					break;
++
++				case VARCHAR:
++					break;
++
++				case BOOLEAN:
++					break;
++
++				case ENUM:
++					break;
++
++				case FLOAT:
++					break;
++
++				case DOUBLE:
++					break;
++
++				case DATE:
++					break;
++
++				case TIME:
++					break;
++
++   				case BASE_TYPES_MAX:
++				    break;
++   			}
++  		}
++	}
++ 	return -1;
++}
+diff --git a/src/db/tuple_print.o b/src/db/tuple_print.o
+deleted file mode 100644
+index a812941..0000000
+Binary files a/src/db/tuple_print.o and /dev/null differ
+diff --git a/src/db/tuple_set.o b/src/db/tuple_set.o
+deleted file mode 100644
+index 10246a2..0000000
+Binary files a/src/db/tuple_set.o and /dev/null differ
+diff --git a/src/db/tuple_util.o b/src/db/tuple_util.o
+deleted file mode 100644
+index 6848022..0000000
+Binary files a/src/db/tuple_util.o and /dev/null differ
+diff --git a/src/db/vertex.o b/src/db/vertex.o
+deleted file mode 100644
+index 840f265..0000000
+Binary files a/src/db/vertex.o and /dev/null differ
+diff --git a/src/db/vertexid.o b/src/db/vertexid.o
+deleted file mode 100644
+index b001043..0000000
+Binary files a/src/db/vertexid.o and /dev/null differ
+
+commit 72d0f706568e0868677589fb480781294995fa35
+Author: logeswarishanmugavel <logeswari.shanmugavel@colorado.edu>
+Date:   Fri Apr 28 10:13:33 2017 -0600
+
+    Initial Setup
+
+diff --git a/.DS_Store b/.DS_Store
+new file mode 100644
+index 0000000..dc45b57
+Binary files /dev/null and b/.DS_Store differ
+diff --git a/src/.DS_Store b/src/.DS_Store
+new file mode 100644
+index 0000000..af23717
+Binary files /dev/null and b/src/.DS_Store differ
+diff --git a/src/cli/.DS_Store b/src/cli/.DS_Store
+new file mode 100644
+index 0000000..51227d7
+Binary files /dev/null and b/src/cli/.DS_Store differ
+diff --git a/src/cli/Makefile b/src/cli/Makefile
+index 8e6941b..8daaa8e 100644
+--- a/src/cli/Makefile
++++ b/src/cli/Makefile
+@@ -8,6 +8,7 @@ OBJS =	bufdump.o 			\
+ 	cli_graph.o			\
+ 	cli_graph_edge.o		\
+ 	cli_graph_new.o			\
++	cli_dijkstra.o			\
+ 	cli_graph_schema.o		\
+ 	cli_graph_schema_add.o		\
+ 	cli_graph_tuple.o		\
+diff --git a/src/cli/bufdump.o b/src/cli/bufdump.o
+new file mode 100644
+index 0000000..af05a67
+Binary files /dev/null and b/src/cli/bufdump.o differ
+diff --git a/src/cli/cli.c b/src/cli/cli.c
+index 9f40c4e..ea4734c 100644
+--- a/src/cli/cli.c
++++ b/src/cli/cli.c
+@@ -116,7 +116,10 @@ cli()
+ 			   strcmp(cmd, "g") == 0) {
+ 			cli_graph(cmdline, &pos);
+ 			continue;
+-		}
++		} else if (strcmp(cmd, "dijkstra") == 0 || strcmp(cmd, "d") == 0) {
++			cli_dijkstra(cmdline, &pos);
++			continue;
++		} 
+ 	}
+ }
+ 
+diff --git a/src/cli/cli.o b/src/cli/cli.o
+new file mode 100644
+index 0000000..f8e992a
+Binary files /dev/null and b/src/cli/cli.o differ
+diff --git a/src/cli/cli_dijkstra.c b/src/cli/cli_dijkstra.c
+new file mode 100644
+index 0000000..26e2d99
+--- /dev/null
++++ b/src/cli/cli_dijkstra.c
+@@ -0,0 +1,38 @@
++#include <assert.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include "cli.h"
++#include "graph.h"
++# define MAX 20
++
++void cli_dijkstra(char cmdline, int pos){
++	printf("Applying Dijkstra's Algorithm to the selected graph\n");
++	
++	//Check if atleast one graph is present
++	assert (graphs != NULL);
++
++	//initialization
++	graph_t g;
++	vertex_t v;
++	edge_t e;
++	int vcnt = 0;
++	int ecnt = 0;
++
++	//Run the algorithm for all the graphs
++	for(g = graphs; g!=NULL; g = g->next){
++		if(g == current){
++			//graph_print(g,1);
++			for(v = g->v; v!=NULL; v = v->next){
++				//vertex_print(v);
++				vcnt++;
++			}
++			//printf("%d\n", vcnt);
++			for(e = g->e; e!=NULL; e = e->next){
++				//edge_print(e);
++				ecnt++;
++			}
++			//printf("%d\n", ecnt);
++		}
++	}
++}
+\ No newline at end of file
+diff --git a/src/cli/cli_dijkstra.o b/src/cli/cli_dijkstra.o
+new file mode 100644
+index 0000000..0ab23d1
+Binary files /dev/null and b/src/cli/cli_dijkstra.o differ
+diff --git a/src/cli/cli_enum.o b/src/cli/cli_enum.o
+new file mode 100644
+index 0000000..3ba94d3
+Binary files /dev/null and b/src/cli/cli_enum.o differ
+diff --git a/src/cli/cli_graph.c b/src/cli/cli_graph.c
+index 29dfe16..310e9e6 100644
+--- a/src/cli/cli_graph.c
++++ b/src/cli/cli_graph.c
+@@ -10,6 +10,7 @@ void cli_graph_new(char *cmdline, int *pos);
+ void cli_graph_edge(char *cmdline, int *pos);
+ void cli_graph_schema(char *cmdline, int *pos);
+ void cli_graph_tuple(char *cmdline, int *pos);
++void cli_dijkstra(char *cmdline, int *pos);
+ 
+ static void
+ cli_graph_print()
+@@ -49,6 +50,9 @@ cli_graph(char *cmdline, int *pos)
+ 	else if (strcmp(s, "tuple") == 0 || strcmp(s, "t") == 0)
+ 		cli_graph_tuple(cmdline, pos);
+ 
++	else if (strcmp(s, "dijkstra") == 0 || strcmp(s, "d") == 0)
++		cli_dijkstra(cmdline, pos);
++
+ 	else if (isdigit(s[0])) {
+ 		graph_t g;
+ 		int i, cnt;
+diff --git a/src/cli/cli_graph.o b/src/cli/cli_graph.o
+new file mode 100644
+index 0000000..6deeea1
+Binary files /dev/null and b/src/cli/cli_graph.o differ
+diff --git a/src/cli/cli_graph_edge.o b/src/cli/cli_graph_edge.o
+new file mode 100644
+index 0000000..e6eaf23
+Binary files /dev/null and b/src/cli/cli_graph_edge.o differ
+diff --git a/src/cli/cli_graph_new.o b/src/cli/cli_graph_new.o
+new file mode 100644
+index 0000000..490e810
+Binary files /dev/null and b/src/cli/cli_graph_new.o differ
+diff --git a/src/cli/cli_graph_schema.o b/src/cli/cli_graph_schema.o
+new file mode 100644
+index 0000000..014ad9c
+Binary files /dev/null and b/src/cli/cli_graph_schema.o differ
+diff --git a/src/cli/cli_graph_schema_add.o b/src/cli/cli_graph_schema_add.o
+new file mode 100644
+index 0000000..4e36e3f
+Binary files /dev/null and b/src/cli/cli_graph_schema_add.o differ
+diff --git a/src/cli/cli_graph_tuple.o b/src/cli/cli_graph_tuple.o
+new file mode 100644
+index 0000000..2ffc635
+Binary files /dev/null and b/src/cli/cli_graph_tuple.o differ
+diff --git a/src/cli/cli_graph_update_tuples.o b/src/cli/cli_graph_update_tuples.o
+new file mode 100644
+index 0000000..93e9b57
+Binary files /dev/null and b/src/cli/cli_graph_update_tuples.o differ
+diff --git a/src/cli/db b/src/cli/db
+new file mode 100755
+index 0000000..52e1ce7
+Binary files /dev/null and b/src/cli/db differ
+diff --git a/src/cli/lex.o b/src/cli/lex.o
+new file mode 100644
+index 0000000..810e4f6
+Binary files /dev/null and b/src/cli/lex.o differ
+diff --git a/src/cli/main.o b/src/cli/main.o
+new file mode 100644
+index 0000000..166e7ce
+Binary files /dev/null and b/src/cli/main.o differ
+diff --git a/src/db/edge.o b/src/db/edge.o
+new file mode 100644
+index 0000000..a1ebf2c
+Binary files /dev/null and b/src/db/edge.o differ
+diff --git a/src/db/enum.o b/src/db/enum.o
+new file mode 100644
+index 0000000..56e4245
+Binary files /dev/null and b/src/db/enum.o differ
+diff --git a/src/db/graph.o b/src/db/graph.o
+new file mode 100644
+index 0000000..346689b
+Binary files /dev/null and b/src/db/graph.o differ
+diff --git a/src/db/libdb.a b/src/db/libdb.a
+new file mode 100644
+index 0000000..69fe2bc
+Binary files /dev/null and b/src/db/libdb.a differ
+diff --git a/src/db/schema.o b/src/db/schema.o
+new file mode 100644
+index 0000000..ecaa3ee
+Binary files /dev/null and b/src/db/schema.o differ
+diff --git a/src/db/string_pool.o b/src/db/string_pool.o
+new file mode 100644
+index 0000000..a58c36c
+Binary files /dev/null and b/src/db/string_pool.o differ
+diff --git a/src/db/tuple.o b/src/db/tuple.o
+new file mode 100644
+index 0000000..58c7f50
+Binary files /dev/null and b/src/db/tuple.o differ
+diff --git a/src/db/tuple_print.o b/src/db/tuple_print.o
+new file mode 100644
+index 0000000..a812941
+Binary files /dev/null and b/src/db/tuple_print.o differ
+diff --git a/src/db/tuple_set.o b/src/db/tuple_set.o
+new file mode 100644
+index 0000000..10246a2
+Binary files /dev/null and b/src/db/tuple_set.o differ
+diff --git a/src/db/tuple_util.o b/src/db/tuple_util.o
+new file mode 100644
+index 0000000..6848022
+Binary files /dev/null and b/src/db/tuple_util.o differ
+diff --git a/src/db/vertex.o b/src/db/vertex.o
+new file mode 100644
+index 0000000..840f265
+Binary files /dev/null and b/src/db/vertex.o differ
+diff --git a/src/db/vertexid.o b/src/db/vertexid.o
+new file mode 100644
+index 0000000..b001043
+Binary files /dev/null and b/src/db/vertexid.o differ

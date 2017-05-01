@@ -197,8 +197,7 @@ void cli_dijkstra(char *cmdline, int *pos){
 		if(g == current){
 			
 			//Printing the selected graph
-			printf("\nSelected graph:");
-			printf("\n--------------------------------------------------------------------------------------");
+			printf("\nSelected graph:\n");
 			graph_print(g,1);
 			
 			//Counting the number of vertices in the graph
@@ -223,8 +222,13 @@ void cli_dijkstra(char *cmdline, int *pos){
 	 				e_weight = get_tuple_weight(e->tuple, g->el);
 			    	vid1 = e->id1;
 			    	vid2 = e->id2;
-			    	G[vid1][vid2] = e_weight;
-			    	G[vid2][vid1] = e_weight;
+			    	if(cmdline[6]-'0' == 0){
+			    		G[vid1][vid2] = e_weight;
+			    		G[vid2][vid1] = e_weight;
+			    	}
+			    	else if(cmdline[6]-'0' == 1){
+			    		G[vid1][vid2] = e_weight;
+			    	}
 				}
 			}
 
